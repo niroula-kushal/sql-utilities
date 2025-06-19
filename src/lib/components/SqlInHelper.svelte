@@ -5,8 +5,10 @@
   let outputFormat: 'single' | 'multi' = 'multi';
   let copySuccess = false;
 
-  // Reactive statement to process input whenever it changes
+  // Reactive statement to process input whenever input or settings change
   $: {
+    // Explicitly reference all dependencies to ensure reactivity
+    inputText, quoteType, outputFormat;
     if (inputText.trim()) {
       processInput();
     } else {
