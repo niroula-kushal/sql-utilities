@@ -3,6 +3,7 @@
   let outputText = '';
   let quoteType: 'single' | 'double' = 'single';
   let outputFormat: 'single' | 'multi' = 'multi';
+  let prependWithIn = true;
   let copySuccess = false;
 
   function escapeQuotes(text: string) {
@@ -16,7 +17,7 @@
   // Reactive statement to process input whenever input or settings change
   $: {
     // Explicitly reference all dependencies to ensure reactivity
-    inputText, quoteType, outputFormat;
+    inputText, quoteType, outputFormat, prependWithIn;
     if (inputText.trim()) {
       processInput();
     } else {
@@ -54,15 +55,19 @@
     const formattedLines = lines.map(line => `${quote}${line}${quote}`);
 
     // Generate output based on format preference
+    let result: string;
     if (outputFormat === 'single') {
-      outputText = `(${formattedLines.join(', ')})`;
+      result = `(${formattedLines.join(', ')})`;
     } else {
       // Multi-line format
       const indent = '  ';
-      outputText = '(\n' +
-        formattedLines.map(line => `${indent}${line}`).join(',\n') +
+      result = '(\n' + 
+        formattedLines.map(line => `${indent}${line}`).join(',\n') + 
         '\n)';
     }
+
+    // Prepend with IN if option is checked
+    outputText = prependWithIn ? `IN ${result}` : result;
   }
 
   async function copyToClipboard() {
@@ -109,7 +114,7 @@ grape`;
   <!-- Options Panel -->
   <div class="card">
     <h3 class="text-lg font-semibold text-gray-900 mb-4">Output Options</h3>
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
       <!-- Quote Type Selection -->
       <div>
         <fieldset>
@@ -143,24 +148,39 @@ grape`;
           <legend class="block text-sm font-medium text-gray-700 mb-2">Output Format</legend>
           <div class="flex space-x-4">
             <label class="flex items-center">
-              <input
-                type="radio"
-                bind:group={outputFormat}
+              <input 
+                type="radio" 
+                bind:group={outputFormat} 
                 value="single"
                 class="w-4 h-4 text-primary-600 border-gray-300 focus:ring-primary-500"
               />
               <span class="ml-2 text-sm text-gray-700">Single line</span>
             </label>
             <label class="flex items-center">
-              <input
-                type="radio"
-                bind:group={outputFormat}
+              <input 
+                type="radio" 
+                bind:group={outputFormat} 
                 value="multi"
                 class="w-4 h-4 text-primary-600 border-gray-300 focus:ring-primary-500"
               />
               <span class="ml-2 text-sm text-gray-700">Multi-line</span>
             </label>
           </div>
+        </fieldset>
+      </div>
+
+      <!-- Prepend with IN Option -->
+      <div>
+        <fieldset>
+          <legend class="block text-sm font-medium text-gray-700 mb-2">SQL Clause</legend>
+          <label class="flex items-center">
+            <input 
+              type="checkbox" 
+              bind:checked={prependWithIn}
+              class="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+            />
+            <span class="ml-2 text-sm text-gray-700">Prepend with IN</span>
+          </label>
         </fieldset>
       </div>
     </div>
@@ -241,7 +261,7 @@ cherry</pre>
       </div>
       <div>
         <p class="text-sm text-blue-800 mb-2"><strong>Output (Multi-line):</strong></p>
-        <pre class="bg-white p-2 rounded border text-xs font-mono">(
+        <pre class="bg-white p-2 rounded border text-xs font-mono">IN (
   'apple',
   'banana',
   'cherry'
