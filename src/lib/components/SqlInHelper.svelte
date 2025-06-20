@@ -5,6 +5,14 @@
   let outputFormat: 'single' | 'multi' = 'multi';
   let copySuccess = false;
 
+  function escapeQuotes(text: string) {
+    if (quoteType === 'single') {
+      return text.replace(/'/g, "\\'");
+    } else {
+      return text.replace(/"/g, '\\"');
+    }
+  };
+
   // Reactive statement to process input whenever input or settings change
   $: {
     // Explicitly reference all dependencies to ensure reactivity
@@ -25,17 +33,23 @@
     // Split input into lines and filter out empty lines
     const lines = inputText
       .split('\n')
-      .map(line => line.trim())
+      .map(line => {
+        let final = line.trim();
+        return escapeQuotes(final);
+      })
       .filter(line => line.length > 0);
 
     if (lines.length === 0) {
       outputText = '';
       return;
     }
+    // Escape quotes in the content based on quote type
 
+
+    // Apply escaping to all lines
     // Choose quote character based on selection
     const quote = quoteType === 'single' ? "'" : '"';
-    
+
     // Format each line with quotes
     const formattedLines = lines.map(line => `${quote}${line}${quote}`);
 
@@ -45,15 +59,15 @@
     } else {
       // Multi-line format
       const indent = '  ';
-      outputText = '(\n' + 
-        formattedLines.map(line => `${indent}${line}`).join(',\n') + 
+      outputText = '(\n' +
+        formattedLines.map(line => `${indent}${line}`).join(',\n') +
         '\n)';
     }
   }
 
   async function copyToClipboard() {
     if (!outputText) return;
-    
+
     try {
       await navigator.clipboard.writeText(outputText);
       copySuccess = true;
@@ -87,7 +101,7 @@ grape`;
   <div class="text-center">
     <h2 class="text-3xl font-bold text-gray-900 mb-2">SQL IN Helper</h2>
     <p class="text-gray-600 max-w-2xl mx-auto">
-      Transform your list of values into properly formatted SQL IN clauses. 
+      Transform your list of values into properly formatted SQL IN clauses.
       Paste your data, choose your formatting options, and get ready-to-use SQL.
     </p>
   </div>
@@ -102,18 +116,18 @@ grape`;
           <legend class="block text-sm font-medium text-gray-700 mb-2">Quote Type</legend>
           <div class="flex space-x-4">
             <label class="flex items-center">
-              <input 
-                type="radio" 
-                bind:group={quoteType} 
+              <input
+                type="radio"
+                bind:group={quoteType}
                 value="single"
                 class="w-4 h-4 text-primary-600 border-gray-300 focus:ring-primary-500"
               />
               <span class="ml-2 text-sm text-gray-700">Single quotes (')</span>
             </label>
             <label class="flex items-center">
-              <input 
-                type="radio" 
-                bind:group={quoteType} 
+              <input
+                type="radio"
+                bind:group={quoteType}
                 value="double"
                 class="w-4 h-4 text-primary-600 border-gray-300 focus:ring-primary-500"
               />
@@ -129,18 +143,18 @@ grape`;
           <legend class="block text-sm font-medium text-gray-700 mb-2">Output Format</legend>
           <div class="flex space-x-4">
             <label class="flex items-center">
-              <input 
-                type="radio" 
-                bind:group={outputFormat} 
+              <input
+                type="radio"
+                bind:group={outputFormat}
                 value="single"
                 class="w-4 h-4 text-primary-600 border-gray-300 focus:ring-primary-500"
               />
               <span class="ml-2 text-sm text-gray-700">Single line</span>
             </label>
             <label class="flex items-center">
-              <input 
-                type="radio" 
-                bind:group={outputFormat} 
+              <input
+                type="radio"
+                bind:group={outputFormat}
                 value="multi"
                 class="w-4 h-4 text-primary-600 border-gray-300 focus:ring-primary-500"
               />
@@ -159,13 +173,13 @@ grape`;
       <div class="flex justify-between items-center mb-4">
         <h3 class="text-lg font-semibold text-gray-900">Input Data</h3>
         <div class="flex space-x-2">
-          <button 
+          <button
             on:click={loadSample}
             class="btn btn-secondary text-xs"
           >
             Load Sample
           </button>
-          <button 
+          <button
             on:click={clearAll}
             class="btn btn-secondary text-xs"
           >
@@ -173,13 +187,13 @@ grape`;
           </button>
         </div>
       </div>
-      
-      <textarea 
+
+      <textarea
         bind:value={inputText}
         placeholder="Paste your data here, one item per line...&#10;&#10;Example:&#10;apple&#10;banana&#10;cherry"
         class="textarea-field min-h-[300px] font-mono text-sm"
       ></textarea>
-      
+
       <p class="text-xs text-gray-500 mt-2">
         {inputText.split('\n').filter(line => line.trim()).length} items
       </p>
@@ -189,7 +203,7 @@ grape`;
     <div class="card">
       <div class="flex justify-between items-center mb-4">
         <h3 class="text-lg font-semibold text-gray-900">SQL Output</h3>
-        <button 
+        <button
           on:click={copyToClipboard}
           disabled={!outputText}
           class="btn btn-primary text-xs flex items-center space-x-2"
