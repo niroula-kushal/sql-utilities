@@ -1,280 +1,228 @@
 <script lang="ts">
+  type Tool = 'in' | 'converter';
+  type Dialect = 'postgresql' | 'mysql' | 'sqlserver';
+
+  let activeTool: Tool = 'in';
+
+  // IN helper state
   let inputText = '';
   let outputText = '';
   let quoteType: 'single' | 'double' = 'single';
   let outputFormat: 'single' | 'multi' = 'multi';
   let prependWithIn = true;
+
+  // converter state
+  let sourceDialect: Dialect = 'postgresql';
+  let targetDialects: Dialect[] = ['mysql', 'sqlserver'];
+  let queryInput = '';
+  let convertedOutput = '';
+
   let copySuccess = false;
+
+  const DIALECTS: { value: Dialect; label: string }[] = [
+    { value: 'postgresql', label: 'PostgreSQL' },
+    { value: 'mysql', label: 'MySQL' },
+    { value: 'sqlserver', label: 'SQL Server' }
+  ];
+
+  $: {
+    inputText, quoteType, outputFormat, prependWithIn;
+    processInInput();
+  }
+
+  $: {
+    sourceDialect, targetDialects, queryInput;
+    processQueryInput();
+  }
 
   function escapeQuotes(text: string) {
     if (quoteType === 'single') {
       return text.replace(/'/g, "\\'");
-    } else {
-      return text.replace(/"/g, '\\"');
     }
-  };
 
-  // Reactive statement to process input whenever input or settings change
-  $: {
-    // Explicitly reference all dependencies to ensure reactivity
-    inputText, quoteType, outputFormat, prependWithIn;
-    if (inputText.trim()) {
-      processInput();
-    } else {
-      outputText = '';
-    }
+    return text.replace(/"/g, '\\"');
   }
 
-  function processInput() {
+  function processInInput() {
     if (!inputText.trim()) {
       outputText = '';
       return;
     }
 
-    // Split input into lines and filter out empty lines
     const lines = inputText
       .split('\n')
-      .map(line => {
-        let final = line.trim();
-        return escapeQuotes(final);
-      })
-      .filter(line => line.length > 0);
+      .map((line) => escapeQuotes(line.trim()))
+      .filter((line) => line.length > 0);
 
-    if (lines.length === 0) {
+    if (!lines.length) {
       outputText = '';
       return;
     }
-    // Escape quotes in the content based on quote type
 
-
-    // Apply escaping to all lines
-    // Choose quote character based on selection
     const quote = quoteType === 'single' ? "'" : '"';
+    const formatted = lines.map((line) => `${quote}${line}${quote}`);
 
-    // Format each line with quotes
-    const formattedLines = lines.map(line => `${quote}${line}${quote}`);
+    const result = outputFormat === 'single'
+      ? `(${formatted.join(', ')})`
+      : `(\n  ${formatted.join(',\n  ')}\n)`;
 
-    // Generate output based on format preference
-    let result: string;
-    if (outputFormat === 'single') {
-      result = `(${formattedLines.join(', ')})`;
-    } else {
-      // Multi-line format
-      const indent = '  ';
-      result = '(\n' + 
-        formattedLines.map(line => `${indent}${line}`).join(',\n') + 
-        '\n)';
-    }
-
-    // Prepend with IN if option is checked
     outputText = prependWithIn ? `IN ${result}` : result;
   }
 
-  async function copyToClipboard() {
-    if (!outputText) return;
+  function toggleTarget(dialect: Dialect) {
+    if (dialect === sourceDialect) return;
+
+    if (targetDialects.includes(dialect)) {
+      targetDialects = targetDialects.filter((d) => d !== dialect);
+      return;
+    }
+
+    targetDialects = [...targetDialects, dialect];
+  }
+
+  function normalizeFromSource(query: string, source: Dialect) {
+    let normalized = query;
+
+    if (source === 'mysql') {
+      normalized = normalized
+        .replace(/`([^`]+)`/g, '"$1"')
+        .replace(/\bNOW\s*\(\s*\)/gi, 'CURRENT_TIMESTAMP')
+        .replace(/\bIFNULL\s*\(/gi, 'COALESCE(')
+        .replace(/\bLIMIT\s+(\d+)\s*,\s*(\d+)/gi, 'LIMIT $2 OFFSET $1');
+    }
+
+    if (source === 'sqlserver') {
+      normalized = normalized
+        .replace(/\[([^\]]+)\]/g, '"$1"')
+        .replace(/\bGETDATE\s*\(\s*\)/gi, 'CURRENT_TIMESTAMP')
+        .replace(/\bISNULL\s*\(/gi, 'COALESCE(');
+    }
+
+    return normalized;
+  }
+
+  function convertToTarget(query: string, target: Dialect) {
+    let converted = query;
+
+    if (target === 'postgresql') return converted;
+
+    if (target === 'mysql') {
+      return converted
+        .replace(/"([^"]+)"/g, '`$1`')
+        .replace(/\bCURRENT_TIMESTAMP\b/gi, 'NOW()')
+        .replace(/\bILIKE\b/gi, 'LIKE')
+        .replace(/LIMIT\s+(\d+)\s+OFFSET\s+(\d+)/gi, 'LIMIT $2, $1');
+    }
+
+    return converted
+      .replace(/"([^"]+)"/g, '[$1]')
+      .replace(/\bCURRENT_TIMESTAMP\b/gi, 'GETDATE()')
+      .replace(/\bTRUE\b/gi, '1')
+      .replace(/\bFALSE\b/gi, '0');
+  }
+
+  function processQueryInput() {
+    const cleanInput = queryInput.trim();
+
+    if (!cleanInput) {
+      convertedOutput = '';
+      return;
+    }
+
+    const normalized = normalizeFromSource(cleanInput, sourceDialect);
+    const targets = targetDialects.filter((target) => target !== sourceDialect);
+
+    if (!targets.length) {
+      convertedOutput = 'Select at least one target SQL dialect.';
+      return;
+    }
+
+    convertedOutput = targets
+      .map((target) => {
+        const title = DIALECTS.find((d) => d.value === target)?.label ?? target;
+        return `-- ${title}\n${convertToTarget(normalized, target)}`;
+      })
+      .join('\n\n');
+  }
+
+  async function copyToClipboard(value: string) {
+    if (!value) return;
 
     try {
-      await navigator.clipboard.writeText(outputText);
+      await navigator.clipboard.writeText(value);
       copySuccess = true;
-      setTimeout(() => {
-        copySuccess = false;
-      }, 2000);
+      setTimeout(() => (copySuccess = false), 2000);
     } catch (err) {
       console.error('Failed to copy to clipboard:', err);
     }
   }
 
   function clearAll() {
-    inputText = '';
-    outputText = '';
+    if (activeTool === 'in') {
+      inputText = '';
+      outputText = '';
+      return;
+    }
+
+    queryInput = '';
+    convertedOutput = '';
   }
 
-  // Sample data for demo
   function loadSample() {
-    inputText = `apple
-banana
-cherry
-date
-elderberry
-fig
-grape`;
+    if (activeTool === 'in') {
+      inputText = `apple\nbanana\ncherry\ndate\nelderberry\nfig\ngrape`;
+      return;
+    }
+
+    sourceDialect = 'postgresql';
+    targetDialects = ['mysql', 'sqlserver'];
+    queryInput = `SELECT "id", "name", CURRENT_TIMESTAMP\nFROM "users"\nWHERE "name" ILIKE '%john%'\nORDER BY "id" DESC\nLIMIT 10 OFFSET 5;`;
   }
 </script>
 
 <div class="space-y-6">
-  <!-- Header Section -->
   <div class="text-center">
-    <h2 class="text-3xl font-bold text-gray-900 mb-2">SQL IN Helper</h2>
-    <p class="text-gray-600 max-w-2xl mx-auto">
-      Transform your list of values into properly formatted SQL IN clauses.
-      Paste your data, choose your formatting options, and get ready-to-use SQL.
-    </p>
+    <h2 class="text-3xl font-bold text-gray-900 mb-2">SQL Utilities</h2>
+    <p class="text-gray-600 max-w-2xl mx-auto">Use the classic IN helper or convert full queries across SQL dialects.</p>
   </div>
 
-  <!-- Options Panel -->
   <div class="card">
-    <h3 class="text-lg font-semibold text-gray-900 mb-4">Output Options</h3>
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-      <!-- Quote Type Selection -->
-      <div>
-        <fieldset>
-          <legend class="block text-sm font-medium text-gray-700 mb-2">Quote Type</legend>
-          <div class="flex space-x-4">
-            <label class="flex items-center">
-              <input
-                type="radio"
-                bind:group={quoteType}
-                value="single"
-                class="w-4 h-4 text-primary-600 border-gray-300 focus:ring-primary-500"
-              />
-              <span class="ml-2 text-sm text-gray-700">Single quotes (')</span>
-            </label>
-            <label class="flex items-center">
-              <input
-                type="radio"
-                bind:group={quoteType}
-                value="double"
-                class="w-4 h-4 text-primary-600 border-gray-300 focus:ring-primary-500"
-              />
-              <span class="ml-2 text-sm text-gray-700">Double quotes (")</span>
-            </label>
-          </div>
-        </fieldset>
-      </div>
-
-      <!-- Output Format Selection -->
-      <div>
-        <fieldset>
-          <legend class="block text-sm font-medium text-gray-700 mb-2">Output Format</legend>
-          <div class="flex space-x-4">
-            <label class="flex items-center">
-              <input 
-                type="radio" 
-                bind:group={outputFormat} 
-                value="single"
-                class="w-4 h-4 text-primary-600 border-gray-300 focus:ring-primary-500"
-              />
-              <span class="ml-2 text-sm text-gray-700">Single line</span>
-            </label>
-            <label class="flex items-center">
-              <input 
-                type="radio" 
-                bind:group={outputFormat} 
-                value="multi"
-                class="w-4 h-4 text-primary-600 border-gray-300 focus:ring-primary-500"
-              />
-              <span class="ml-2 text-sm text-gray-700">Multi-line</span>
-            </label>
-          </div>
-        </fieldset>
-      </div>
-
-      <!-- Prepend with IN Option -->
-      <div>
-        <fieldset>
-          <legend class="block text-sm font-medium text-gray-700 mb-2">SQL Clause</legend>
-          <label class="flex items-center">
-            <input 
-              type="checkbox" 
-              bind:checked={prependWithIn}
-              class="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
-            />
-            <span class="ml-2 text-sm text-gray-700">Prepend with IN</span>
-          </label>
-        </fieldset>
-      </div>
+    <h3 class="text-lg font-semibold text-gray-900 mb-4">Tool</h3>
+    <div class="flex space-x-6">
+      <label class="flex items-center"><input type="radio" bind:group={activeTool} value="in" class="w-4 h-4 text-primary-600 border-gray-300 focus:ring-primary-500" /><span class="ml-2 text-sm text-gray-700">SQL IN Helper</span></label>
+      <label class="flex items-center"><input type="radio" bind:group={activeTool} value="converter" class="w-4 h-4 text-primary-600 border-gray-300 focus:ring-primary-500" /><span class="ml-2 text-sm text-gray-700">Query Converter</span></label>
     </div>
   </div>
 
-  <!-- Input/Output Section -->
+  {#if activeTool === 'in'}
+    <div class="card">
+      <h3 class="text-lg font-semibold text-gray-900 mb-4">IN Output Options</h3>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div><p class="block text-sm font-medium text-gray-700 mb-2">Quote Type</p><div class="flex space-x-4"><label class="flex items-center"><input type="radio" bind:group={quoteType} value="single" class="w-4 h-4 text-primary-600 border-gray-300 focus:ring-primary-500" /><span class="ml-2 text-sm text-gray-700">Single</span></label><label class="flex items-center"><input type="radio" bind:group={quoteType} value="double" class="w-4 h-4 text-primary-600 border-gray-300 focus:ring-primary-500" /><span class="ml-2 text-sm text-gray-700">Double</span></label></div></div>
+        <div><p class="block text-sm font-medium text-gray-700 mb-2">Output Format</p><div class="flex space-x-4"><label class="flex items-center"><input type="radio" bind:group={outputFormat} value="single" class="w-4 h-4 text-primary-600 border-gray-300 focus:ring-primary-500" /><span class="ml-2 text-sm text-gray-700">Single line</span></label><label class="flex items-center"><input type="radio" bind:group={outputFormat} value="multi" class="w-4 h-4 text-primary-600 border-gray-300 focus:ring-primary-500" /><span class="ml-2 text-sm text-gray-700">Multi-line</span></label></div></div>
+        <div><p class="block text-sm font-medium text-gray-700 mb-2">SQL Clause</p><label class="flex items-center"><input type="checkbox" bind:checked={prependWithIn} class="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500" /><span class="ml-2 text-sm text-gray-700">Prepend with IN</span></label></div>
+      </div>
+    </div>
+  {:else}
+    <div class="card space-y-4">
+      <h3 class="text-lg font-semibold text-gray-900">Conversion Settings</h3>
+      <div><label for="source-dialect" class="block text-sm font-medium text-gray-700 mb-2">Source Dialect</label><select id="source-dialect" bind:value={sourceDialect} class="textarea-field min-h-0 py-2">{#each DIALECTS as dialect}<option value={dialect.value}>{dialect.label}</option>{/each}</select></div>
+      <div><p class="block text-sm font-medium text-gray-700 mb-2">Target Dialects (select one or more)</p><div class="flex flex-wrap gap-4">{#each DIALECTS as dialect}<label class="flex items-center"><input type="checkbox" checked={targetDialects.includes(dialect.value)} disabled={dialect.value === sourceDialect} on:change={() => toggleTarget(dialect.value)} class="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500" /><span class="ml-2 text-sm text-gray-700">{dialect.label}</span></label>{/each}</div></div>
+    </div>
+  {/if}
+
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-    <!-- Input Panel -->
     <div class="card">
-      <div class="flex justify-between items-center mb-4">
-        <h3 class="text-lg font-semibold text-gray-900">Input Data</h3>
-        <div class="flex space-x-2">
-          <button
-            on:click={loadSample}
-            class="btn btn-secondary text-xs"
-          >
-            Load Sample
-          </button>
-          <button
-            on:click={clearAll}
-            class="btn btn-secondary text-xs"
-          >
-            Clear
-          </button>
-        </div>
-      </div>
-
-      <textarea
-        bind:value={inputText}
-        placeholder="Paste your data here, one item per line...&#10;&#10;Example:&#10;apple&#10;banana&#10;cherry"
-        class="textarea-field min-h-[300px] font-mono text-sm"
-      ></textarea>
-
-      <p class="text-xs text-gray-500 mt-2">
-        {inputText.split('\n').filter(line => line.trim()).length} items
-      </p>
+      <div class="flex justify-between items-center mb-4"><h3 class="text-lg font-semibold text-gray-900">{activeTool === 'in' ? 'Input Data' : 'Input Query'}</h3><div class="flex space-x-2"><button on:click={loadSample} class="btn btn-secondary text-xs">Load Sample</button><button on:click={clearAll} class="btn btn-secondary text-xs">Clear</button></div></div>
+      {#if activeTool === 'in'}
+        <textarea bind:value={inputText} placeholder="Paste one item per line..." class="textarea-field min-h-[300px] font-mono text-sm"></textarea>
+      {:else}
+        <textarea bind:value={queryInput} placeholder="Paste a SQL query here..." class="textarea-field min-h-[300px] font-mono text-sm"></textarea>
+      {/if}
     </div>
-
-    <!-- Output Panel -->
     <div class="card">
-      <div class="flex justify-between items-center mb-4">
-        <h3 class="text-lg font-semibold text-gray-900">SQL Output</h3>
-        <button
-          on:click={copyToClipboard}
-          disabled={!outputText}
-          class="btn btn-primary text-xs flex items-center space-x-2"
-          class:opacity-50={!outputText}
-        >
-          {#if copySuccess}
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-            </svg>
-            <span>Copied!</span>
-          {:else}
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
-            </svg>
-            <span>Copy</span>
-          {/if}
-        </button>
-      </div>
-
-      <div class="relative">
-        <pre class="code-block min-h-[300px] whitespace-pre-wrap">{outputText || 'Your formatted SQL will appear here...'}</pre>
-      </div>
-    </div>
-  </div>
-
-  <!-- Usage Example -->
-  <div class="card bg-blue-50 border-blue-200">
-    <h3 class="text-lg font-semibold text-blue-900 mb-3">Usage Example</h3>
-    <div class="space-y-3">
-      <div>
-        <p class="text-sm text-blue-800 mb-2"><strong>Input:</strong></p>
-        <pre class="bg-white p-2 rounded border text-xs font-mono">apple
-banana
-cherry</pre>
-      </div>
-      <div>
-        <p class="text-sm text-blue-800 mb-2"><strong>Output (Multi-line):</strong></p>
-        <pre class="bg-white p-2 rounded border text-xs font-mono">IN (
-  'apple',
-  'banana',
-  'cherry'
-)</pre>
-      </div>
-      <div>
-        <p class="text-sm text-blue-800 mb-2"><strong>Use in SQL:</strong></p>
-        <pre class="bg-white p-2 rounded border text-xs font-mono">SELECT * FROM fruits WHERE name IN (
-  'apple',
-  'banana',
-  'cherry'
-);</pre>
-      </div>
+      <div class="flex justify-between items-center mb-4"><h3 class="text-lg font-semibold text-gray-900">{activeTool === 'in' ? 'SQL Output' : 'Converted Query'}</h3><button on:click={() => copyToClipboard(activeTool === 'in' ? outputText : convertedOutput)} disabled={!(activeTool === 'in' ? outputText : convertedOutput)} class="btn {copySuccess ? 'btn-success' : 'btn-primary'} text-xs disabled:opacity-50 disabled:cursor-not-allowed">{copySuccess ? 'Copied!' : 'Copy SQL'}</button></div>
+      <textarea value={activeTool === 'in' ? outputText : convertedOutput} readonly class="textarea-field min-h-[300px] font-mono text-sm bg-gray-50" placeholder="Generated SQL will appear here..."></textarea>
     </div>
   </div>
 </div>
